@@ -272,11 +272,11 @@
     // explicitly added as Staff later (Settings → Users → Staff: On)
     const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true, isStaff: false };
     data.users.push(proprietor);
-    // default sales person (PIN 0000, renameable in Settings) — counted as Staff
-    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '0000', role: 'employee', active: true, isStaff: true });
+    // default employee (PIN 0000, renameable in Settings) — counted as Staff
+    data.users.push({ id: DB.uid(), name: 'Namuli', pin: '0000', role: 'employee', active: true, isStaff: true });
     persist();
     session = proprietor;
-    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Sales Person 1 added.');
+    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Employee: Namuli added.');
     enterApp();
   });
 

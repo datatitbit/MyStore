@@ -25,13 +25,14 @@ body {
 
 /* ===== Login ===== */
 .screen { display: none; min-height: 100vh; }
-.screen.active { display: block; }
+.screen.active { display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #0f9d58 0%, #0b7a44 100%); min-height: 100vh; }
 .login-wrap {
-  max-width: 420px; margin: 0 auto; padding: 48px 20px;
+  max-width: 420px; width: 100%; margin: 0 auto; padding: 40px 20px;
   display: flex; flex-direction: column; gap: 10px;
+  background: #fff; border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,.15);
 }
-.login-logo { font-size: 56px; text-align: center; }
-.login-wrap h1 { text-align: center; font-size: 26px; margin: 0 0 12px; }
+.login-logo { font-size: 56px; text-align: center; margin-bottom: 12px; }
+.login-wrap h1 { text-align: center; font-size: 28px; margin: 0 0 16px; color: #0f9d58; font-weight: 700; }
 .login-wrap h2 { font-size: 20px; margin: 8px 0; }
 .user-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .user-btn {

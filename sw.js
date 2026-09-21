@@ -1,13 +1,13 @@
 /* Shop Records service worker — offline-first cache */
-const CACHE = 'shop-records-v22';
+const CACHE = 'shop-records-v23';
 const ASSETS = [
   '/',
   '/index.html',
-  '/css/style.css',
-  '/js/db.js',
-  '/js/sync.js',
-  '/js/drive.js',
-  '/js/app.js',
+  '/style.css',
+  '/db.js',
+  '/sync.js',
+  '/drive.js',
+  '/app.js',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

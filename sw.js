@@ -1,17 +1,17 @@
 /* Shop Records service worker — offline-first cache */
-const CACHE = 'shop-records-v21';
+const CACHE = 'shop-records-v22';
 const ASSETS = [
-  './',
-  './index.html',
-  './css/style.css',
-  './js/db.js',
-  './js/sync.js',
-  './js/drive.js',
-  './js/app.js',
-  './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-512-maskable.png',
+  '/',
+  '/index.html',
+  '/css/style.css',
+  '/js/db.js',
+  '/js/sync.js',
+  '/js/drive.js',
+  '/js/app.js',
+  '/manifest.json',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/icon-512-maskable.png',
   // jsPDF (cached after first online visit so PDF export works offline too)
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   // Firebase SDK (cached after first online visit so sync works offline-first)
@@ -52,7 +52,7 @@ self.addEventListener('fetch', (e) => {
           caches.open(CACHE).then((c) => c.put(e.request, clone));
         }
         return res;
-      }).catch(() => caches.match('./index.html'));
+      }).catch(() => caches.match('/index.html'));
     })
   );
 });

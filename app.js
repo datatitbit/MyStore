@@ -254,11 +254,17 @@
   $('btn-setup-done').addEventListener('click', () => {
     const store = $('setup-store').value.trim();
     const name = $('setup-name').value.trim() || 'Milly';
-    const p1 = $('setup-pin').value || '';
-    const p2 = $('setup-pin2').value || '';
+    const p1raw = $('setup-pin').value || '';
+    const p2raw = $('setup-pin2').value || '';
     if (!store) return toast('Please enter the store / business name.');
-    if (!/^\d{4}$/.test(p1)) return toast('PIN must be exactly 4 digits.');
-    if (p1 !== p2) return toast('PINs do not match. Try again.');
+    let p1, p2;
+    if (!p1raw && !p2raw) {
+      p1 = p2 = '1234';           // left blank → default PIN, changeable later with Reset PIN
+    } else {
+      p1 = p1raw; p2 = p2raw;
+      if (!/^\d{4}$/.test(p1)) return toast('PIN must be exactly 4 digits (or leave blank for 1234).');
+      if (p1 !== p2) return toast('PINs do not match. Try again.');
+    }
     data.settings.businessName = store;
     data.settings.store = data.settings.store || {};
     data.settings.store.name = store;
@@ -266,11 +272,11 @@
     // explicitly added as Staff later (Settings → Users → Staff: On)
     const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true, isStaff: false };
     data.users.push(proprietor);
-    // default sales person (PIN 1234, renameable in Settings) — counted as Staff
-    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '1234', role: 'employee', active: true, isStaff: true });
+    // default sales person (PIN 1111, renameable in Settings) — counted as Staff
+    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '1111', role: 'employee', active: true, isStaff: true });
     persist();
     session = proprietor;
-    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Sales Person 1 added (PIN 1234)');
+    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' (PIN ' + p1 + ') · Sales Person 1 added (PIN 1111)');
     enterApp();
   });
 
@@ -1840,9 +1846,9 @@
   $('btn-add-emp').addEventListener('click', () => {
     const name = $('emp-name').value.trim();
     const pinInput = $('emp-pin').value.replace(/\D/g, '');
-    const pin = pinInput || '1234';           // default PIN for all new users
+    const pin = pinInput || '1111';           // default PIN for new employees
     if (!name) return toast('Enter the employee name.');
-    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 1234).');
+    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 1111).');
     if (data.users.some((u) => u.name.toLowerCase() === name.toLowerCase()))
       return toast('A user with that name already exists.');
     data.users.push({ id: DB.uid(), name, pin, role: 'employee', active: true, isStaff: true });
@@ -1957,7 +1963,7 @@
     if (!u) return;
     u.isStaff = !u.isStaff;
     saveSettingsFromUI();
-    renderSettings();
+    refreshAll();
     toast(u.name + (u.isStaff
       ? ' added to Staff — will show up in Attendance ✓'
       : ' removed from Staff — will no longer show up in Attendance.'));

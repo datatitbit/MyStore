@@ -32,7 +32,11 @@ body {
   background: #fff; border-radius: 20px; box-shadow: 0 8px 24px rgba(0,0,0,.15);
 }
 .login-logo { font-size: 56px; text-align: center; margin-bottom: 12px; }
-.login-wrap h1 { text-align: center; font-size: 28px; margin: 0 0 16px; color: #0f9d58; font-weight: 700; }
+.login-wrap h1 {
+  text-align: center; font-size: 28px; margin: 0 0 16px; color: #0f9d58;
+  font-weight: 700; opacity: .55; transition: opacity .2s;
+}
+.login-wrap:focus-within h1 { opacity: 1; }
 .login-wrap h2 { font-size: 20px; margin: 8px 0; }
 .user-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .user-btn {
@@ -46,6 +50,7 @@ body {
   background: #e8f5ee; color: var(--green-dark); font-weight: 600;
 }
 .role-tag.proprietor { background: #fff4e0; color: #b06000; }
+.role-tag.other { background: #e7f0fe; color: #1971c2; }
 
 /* PIN */
 .pin-row { display: flex; gap: 10px; justify-content: center; margin: 8px 0 14px; }

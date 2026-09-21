@@ -71,8 +71,12 @@
       // migrate: explicit "Staff" flag for Attendance — employees show up by
       // default (unchanged behaviour), the Proprietor does not unless added
       // on purpose in Settings → Users (Staff: On)
+      // migrate: "type" (Proprietor/Employee/Other) — a label distinct from
+      // "role" (which only ever controls permissions: proprietor vs employee).
+      // Existing users default to a type matching their role.
       merged.users.forEach((u) => {
         if (u.isStaff == null) u.isStaff = u.role !== 'proprietor';
+        if (!u.type) u.type = u.role === 'proprietor' ? 'proprietor' : 'employee';
       });
       return merged;
     } catch (e) {

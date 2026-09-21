@@ -19,10 +19,17 @@
   let adjustStockId = null;
   let pinTargetUserId = null;
   let lastDeleted = null;      // {kind, record}
+  let pickedLoginType = null;  // 'proprietor'|'employee'|'other' chosen on the login screen
 
   const $ = (id) => document.getElementById(id);
 
   /* ---------- helpers ---------- */
+  // "type" is a label (Proprietor/Employee/Other) distinct from "role", which
+  // only ever controls permissions (proprietor = full access, employee = the
+  // rest, and Other always has the same access as Employee).
+  function userType(u) { return u.type || (u.role === 'proprietor' ? 'proprietor' : 'employee'); }
+  function typeLabel(t) { return t === 'proprietor' ? 'Proprietor' : t === 'other' ? 'Other' : 'Employee'; }
+  function defaultPinFor(type) { return type === 'proprietor' ? '1111' : '0000'; }
   function persist() {
     data.updatedAt = Date.now();
     DB.save(data);
@@ -129,27 +136,43 @@
     $('login-business-name').textContent = data.settings.businessName;
     const hasOwner = data.users.some((u) => u.role === 'proprietor');
     $('login-setup').classList.toggle('hidden', hasOwner);
-    $('login-pick').classList.toggle('hidden', !hasOwner);
+    $('login-type').classList.toggle('hidden', !hasOwner);
+    $('login-pick').classList.add('hidden');
     $('login-pin').classList.add('hidden');
+    pickedLoginType = null;
     if (hasOwner) {
-      renderUserList();
       // fast path: regular users of this phone go straight to their PIN
       const lastId = localStorage.getItem(LAST_USER_KEY);
       const last = lastId && data.users.find((u) => u.id === lastId && u.active !== false);
       if (last) {
-        $('login-pick').classList.add('hidden');
+        $('login-type').classList.add('hidden');
         beginPin(last);
       }
     }
   }
 
-  function renderUserList() {
+  // step 1: choose your type (Proprietor / Employee / Other)
+  $('btn-type-next').addEventListener('click', () => {
+    pickedLoginType = $('login-type-select').value;
+    renderUserList(pickedLoginType);
+    $('login-type').classList.add('hidden');
+    $('login-pick').classList.remove('hidden');
+  });
+
+  $('btn-type-back').addEventListener('click', () => {
+    pickedLoginType = null;
+    $('login-pick').classList.add('hidden');
+    $('login-type').classList.remove('hidden');
+  });
+
+  // step 2: choose your name, filtered to the chosen type
+  function renderUserList(type) {
     const sel = $('login-user-select');
     sel.innerHTML = '';
-    const active = data.users.filter((u) => u.active !== false);
+    const active = data.users.filter((u) => u.active !== false && userType(u) === type);
     if (!active.length) {
       const o = document.createElement('option');
-      o.textContent = 'No active users — ask the Proprietor to add you';
+      o.textContent = 'No ' + typeLabel(type) + ' users yet — ask the Proprietor to add you';
       o.value = '';
       sel.appendChild(o);
       return;
@@ -157,7 +180,7 @@
     active.forEach((u) => {
       const o = document.createElement('option');
       o.value = u.id;
-      o.textContent = u.name + (u.role === 'proprietor' ? ' (Proprietor)' : ' (Sales)');
+      o.textContent = u.name;
       sel.appendChild(o);
     });
   }
@@ -169,6 +192,7 @@
     beginPin(user);
   });
 
+  // step 3: PIN entry
   function beginPin(user) {
     pendingPinUser = user;
     pinBuffer = '';
@@ -221,7 +245,13 @@
 
   $('btn-pin-back').addEventListener('click', () => {
     $('login-pin').classList.add('hidden');
-    $('login-pick').classList.remove('hidden');
+    if (pickedLoginType) {
+      renderUserList(pickedLoginType);
+      $('login-pick').classList.remove('hidden');
+    } else {
+      // came here via the fast (remembered-user) path — no type was chosen
+      $('login-type').classList.remove('hidden');
+    }
     pinBuffer = '';
   });
 
@@ -235,58 +265,61 @@
       el.appendChild(d);
     }
   }
-  function watchPinInputs(aId, bId) {
-    const a = $(aId), b = $(bId);
-    function paint() {
-      [[a, aId + '-dots'], [b, bId + '-dots']].forEach(([inp, rowId]) => {
-        const row = $(rowId);
-        if (!row) return;
-        Array.from(row.children).forEach((d, i) =>
-          d.classList.toggle('filled', i < inp.value.length));
-      });
-    }
-    [a, b].forEach((inp) => inp.addEventListener('input', () => {
+  function watchPinInput(id) {
+    const inp = $(id);
+    const row = $(id + '-dots');
+    inp.addEventListener('input', () => {
       inp.value = inp.value.replace(/\D/g, '').slice(0, 4);
-      paint();
-    }));
+      if (!row) return;
+      Array.from(row.children).forEach((d, i) => d.classList.toggle('filled', i < inp.value.length));
+    });
   }
 
   $('btn-setup-done').addEventListener('click', () => {
     const store = $('setup-store').value.trim();
-    const name = $('setup-name').value.trim() || 'Milly';
-    const p1raw = $('setup-pin').value || '';
-    const p2raw = $('setup-pin2').value || '';
+    const type = $('setup-type').value;      // 'proprietor' | 'employee' | 'other'
+    const rawName = $('setup-name').value.trim();
+    const name = rawName || (type === 'proprietor' ? 'Milly' : 'Namuli');
+    const rawPin = $('setup-pin').value || '';
     if (!store) return toast('Please enter the store / business name.');
-    let p1, p2;
-    if (!p1raw && !p2raw) {
-      p1 = p2 = '1111';           // left blank → default PIN, changeable later with Reset PIN
+    let pin;
+    if (!rawPin) {
+      pin = defaultPinFor(type);              // left blank → default PIN, changeable later with Reset PIN
     } else {
-      p1 = p1raw; p2 = p2raw;
-      if (!/^\d{4}$/.test(p1)) return toast('PIN must be exactly 4 digits (or leave blank for 1111).');
-      if (p1 !== p2) return toast('PINs do not match. Try again.');
+      if (!/^\d{4}$/.test(rawPin)) return toast('PIN must be exactly 4 digits (or leave blank for a default PIN).');
+      pin = rawPin;
     }
     data.settings.businessName = store;
     data.settings.store = data.settings.store || {};
     data.settings.store.name = store;
-    // isStaff: false — the Proprietor doesn't show up in Attendance unless
-    // explicitly added as Staff later (Settings → Users → Staff: On)
-    const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true, isStaff: false };
-    data.users.push(proprietor);
-    // default employee (PIN 0000, renameable in Settings) — counted as Staff
-    data.users.push({ id: DB.uid(), name: 'Namuli', pin: '0000', role: 'employee', active: true, isStaff: true });
+    const role = type === 'proprietor' ? 'proprietor' : 'employee';
+    // isStaff: automatic for Employee/Other, off by default for Proprietor
+    // (turn on for the Proprietor later in Settings → Users if wanted)
+    const me = { id: DB.uid(), name, pin, role, type, active: true, isStaff: type !== 'proprietor' };
+    data.users.push(me);
+    // the shop always needs at least one Proprietor and at least one
+    // Employee/Other — auto-add whichever side the person setting up isn't
+    let extra;
+    if (type !== 'proprietor') {
+      extra = 'Proprietor: Milly';
+      data.users.push({ id: DB.uid(), name: 'Milly', pin: defaultPinFor('proprietor'), role: 'proprietor', type: 'proprietor', active: true, isStaff: false });
+    } else {
+      extra = 'Employee: Namuli';
+      data.users.push({ id: DB.uid(), name: 'Namuli', pin: defaultPinFor('employee'), role: 'employee', type: 'employee', active: true, isStaff: true });
+    }
     persist();
-    session = proprietor;
-    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Employee: Namuli added.');
+    session = me;
+    toast('Store "' + store + '" created ✓ ' + typeLabel(type) + ': ' + name + ' · ' + extra + ' added.');
     enterApp();
   });
 
   /* cancel setup: clear everything typed, save nothing */
   $('btn-setup-cancel').addEventListener('click', () => {
     $('setup-store').value = '';
-    $('setup-name').value = 'Milly';
+    $('setup-type').value = 'proprietor';
+    $('setup-name').value = '';
     $('setup-pin').value = '';
-    $('setup-pin2').value = '';
-    [$('setup-pin'), $('setup-pin2')].forEach((inp) => inp.dispatchEvent(new Event('input')));
+    $('setup-pin').dispatchEvent(new Event('input'));
     toast('Setup cancelled — nothing was saved.');
   });
 
@@ -976,7 +1009,7 @@
       const isA = absent.has(u.id);
       return '<div class="row-item att-row' + (isA ? ' absent' : '') + '">' +
         '<div class="main"><div class="title">' + esc(u.name) +
-        (u.role === 'proprietor' ? ' <span class="role-tag proprietor">Proprietor</span>' : '') + '</div>' +
+        (userType(u) !== 'employee' ? ' <span class="role-tag ' + userType(u) + '">' + typeLabel(userType(u)) + '</span>' : '') + '</div>' +
         '<div class="sub">' + (isA ? 'marked absent today' : 'present by default') + '</div></div>' +
         '<div class="att-toggle">' +
         '<button class="att-btn p' + (!isA ? ' active' : '') + '" onclick="App.setAttendance(\'' + u.id + '\',\'P\')" aria-label="Mark ' + esc(u.name) + ' Present">P</button>' +
@@ -1599,6 +1632,7 @@
         if (u.role === 'proprietor') {
           if (!isLastProp) btns += ' <button class="btn btn-small btn-ghost" onclick="App.setRole(\'' + u.id + '\',\'employee\')">Make Sales</button>';
         } else if (u.active !== false) {
+          btns += ' <button class="btn btn-small btn-ghost" onclick="App.toggleOtherType(\'' + u.id + '\')">Type: ' + typeLabel(userType(u)) + '</button>';
           btns += ' <button class="btn btn-small btn-ghost" onclick="App.toggleDash(\'' + u.id + '\')">Dashboard: ' + (u.dash === false ? 'Off' : 'On') + '</button>';
           btns += ' <button class="btn btn-small btn-ghost" onclick="App.setRole(\'' + u.id + '\',\'proprietor\')">Make Proprietor</button>';
           btns += (u.active !== false
@@ -1613,8 +1647,7 @@
         btns += ' <span class="muted">(you)</span>';
       }
       return '<div class="row-item"><div class="main"><div class="title">' + esc(u.name) + ' ' +
-        '<span class="role-tag ' + (u.role === 'proprietor' ? 'proprietor' : '') + '">' +
-        (u.role === 'proprietor' ? 'Proprietor' : 'Sales') + '</span>' + off +
+        '<span class="role-tag ' + userType(u) + '">' + typeLabel(userType(u)) + '</span>' + off +
         '</div></div><div class="row-btns">' + btns + '</div></div>';
     }).join('');
 
@@ -1845,17 +1878,19 @@
 
   $('btn-add-emp').addEventListener('click', () => {
     const name = $('emp-name').value.trim();
+    const type = $('emp-type').value;   // 'employee' | 'proprietor' | 'other'
     const pinInput = $('emp-pin').value.replace(/\D/g, '');
-    const pin = pinInput || '0000';           // default PIN for new employees
-    if (!name) return toast('Enter the employee name.');
-    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 0000).');
+    const pin = pinInput || defaultPinFor(type);
+    if (!name) return toast('Enter the person\'s name.');
+    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for a default PIN).');
     if (data.users.some((u) => u.name.toLowerCase() === name.toLowerCase()))
       return toast('A user with that name already exists.');
-    data.users.push({ id: DB.uid(), name, pin, role: 'employee', active: true, isStaff: true });
-    $('emp-name').value = ''; $('emp-pin').value = '';
+    const role = type === 'proprietor' ? 'proprietor' : 'employee';
+    data.users.push({ id: DB.uid(), name, pin, role, type, active: true, isStaff: type !== 'proprietor' });
+    $('emp-name').value = ''; $('emp-type').value = 'employee'; $('emp-pin').value = '';
     saveSettingsFromUI();
     renderSettings();
-    toast('Employee added ✓ ' + name);
+    toast(typeLabel(type) + ' added ✓ ' + name);
   });
 
   /* rename / role / remove */
@@ -1903,10 +1938,23 @@
         : u.name + ' will lose access to budgets, reports, settings and history.',
       () => {
         u.role = role;
+        u.type = role;   // 'proprietor' or 'employee' — use the Type button afterwards for "Other"
+        if (role === 'proprietor') u.isStaff = false;
         saveSettingsFromUI();
-        renderSettings();
+        refreshAll();
         toast(u.name + ' is now ' + (role === 'proprietor' ? 'a Proprietor' : 'Sales') + ' ✓');
       });
+  };
+
+  /* toggle a non-Proprietor person between the "Employee" and "Other" type
+     label — both have identical access, this is purely for organisation */
+  App.toggleOtherType = function (id) {
+    const u = data.users.find((x) => x.id === id);
+    if (!u || u.role === 'proprietor') return;
+    u.type = userType(u) === 'other' ? 'employee' : 'other';
+    saveSettingsFromUI();
+    refreshAll();
+    toast(u.name + ' set as ' + typeLabel(u.type) + '.');
   };
 
   App.removeUser = function (id) {
@@ -2174,7 +2222,7 @@
     { t: 'Recording a sale 💵', x: 'Tap Sales, then "+ New Sale". Pick the product — the price fills in by itself — enter the quantity, check the total, and save. Stock goes down automatically.' },
     { t: 'Account 🧾', x: 'The Account tab shows this month\'s money in, money out and balance. It is also where you add expenses like rent or buying stock.' },
     { t: 'Stock 📦', x: 'The Stock tab shows what is left. Each item has a reorder level — when stock reaches it, the app shows a Low warning so you know to buy more. Tap an item to add stock, use stock, or change its reorder level.' },
-    { t: 'People & PINs 🔐', x: 'The Proprietor controls everything. Sales people record sales only. Default PINs are 1111 for the Proprietor and 0000 for employees if left blank when adding them — always change these to something private. The Proprietor can add people, rename them, reset PINs and change access under More → Settings & Users.' },
+    { t: 'People & PINs 🔐', x: 'Every person has a Type: Proprietor (controls everything), Employee, or Other. Employee and Other work the same — Other is just a different label for people who aren\'t formally employees. Login now asks your Type first, then your name, then your PIN. Default PINs are 1111 for Proprietor and 0000 for Employee/Other if left blank — always change these to something private. The Proprietor can add people, rename them, reset PINs and change access under More → Settings & Users.' },
     { t: 'Backup & sync ☁️', x: 'Under More → Settings, the Proprietor can connect Google Drive to save or load all records — useful when changing phones — and set up cloud sync so several devices share the same records.' },
     { t: 'Make it yours ⚙️', x: 'In Settings you can change the store name and details, add products with prices, add or remove units like kg or sachet, and restore defaults anytime. Tap the "?" button at the top to see this guide again.' },
   ];
@@ -2331,8 +2379,7 @@
   /* ---------- boot ---------- */
   buildPinPad();
   setupPinRow('setup-pin-dots');
-  setupPinRow('setup-pin2-dots');
-  watchPinInputs('setup-pin', 'setup-pin2');
+  watchPinInput('setup-pin');
 
   if (window.Sync) {
     Sync.init(renderSyncStatus, () => { /* appliedCb: data already refreshed by replaceData */ });

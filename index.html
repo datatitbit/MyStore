@@ -28,27 +28,42 @@
     <!-- First-launch proprietor setup -->
     <div id="login-setup" class="hidden">
       <h2>Welcome! Let's set up your store</h2>
-      <p class="muted">Only the store name is required — you can change names later in Settings.</p>
+      <p class="muted">Only the store name is required — you can change everything later in Settings.</p>
       <label>Store / business name <span class="req">*</span></label>
       <input type="text" id="setup-store" name="store-name" placeholder="e.g. Mili's Shop" autocomplete="on">
-      <label>Proprietor name (optional)</label>
-      <input type="text" id="setup-name" placeholder="Default: Milly" value="Milly" autocomplete="off">
-      <label>Create a 4-digit PIN <small>(optional — default is 1111)</small></label>
-      <input type="password" id="setup-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="1111" autocomplete="off">
+      <label>Your type</label>
+      <select id="setup-type">
+        <option value="proprietor" selected>Proprietor</option>
+        <option value="employee">Employee</option>
+        <option value="other">Other</option>
+      </select>
+      <label>Your name (optional)</label>
+      <input type="text" id="setup-name" placeholder="e.g. Milly" autocomplete="off">
+      <label>Create a 4-digit PIN <small>(optional — a default PIN is used if left blank)</small></label>
+      <input type="password" id="setup-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="••••" autocomplete="off">
       <div class="pin-row" id="setup-pin-dots"></div>
-      <label>Repeat the PIN</label>
-      <input type="password" id="setup-pin2" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="1111" autocomplete="off">
-      <div class="pin-row" id="setup-pin2-dots"></div>
       <button class="btn btn-primary btn-big" id="btn-setup-done" aria-label="Save store setup and continue to login">Save &amp; Continue</button>
       <button class="btn btn-ghost btn-block" id="btn-setup-cancel">Cancel</button>
     </div>
 
-    <!-- Normal login: pick user from a dropdown, then enter PIN -->
+    <!-- Normal login, step 1: pick user TYPE -->
+    <div id="login-type" class="hidden">
+      <p class="muted">Who is using the app now? Choose your type:</p>
+      <select id="login-type-select" aria-label="Select user type for login">
+        <option value="proprietor">Proprietor</option>
+        <option value="employee">Employee</option>
+        <option value="other">Other</option>
+      </select>
+      <button class="btn btn-primary btn-big btn-block" id="btn-type-next" aria-label="Continue to name selection">Continue →</button>
+    </div>
+
+    <!-- Normal login, step 2: pick name (filtered to the chosen type) -->
     <div id="login-pick" class="hidden">
-      <p class="muted">Who is using the app now? Select your name:</p>
+      <p class="muted">Select your name:</p>
       <select id="login-user-select" aria-label="Select user name for login"></select>
       <button class="btn btn-primary btn-big btn-block" id="btn-login-next" aria-label="Continue to PIN entry">Continue →</button>
       <p class="muted small-note">Names are added by the Proprietor in Settings → Users.</p>
+      <button class="btn btn-link" id="btn-type-back">← Back</button>
     </div>
 
     <!-- PIN entry -->
@@ -391,12 +406,18 @@
       <div class="card">
         <h3>Users</h3>
         <div id="user-manage-list"></div>
-        <h4>Add Employee</h4>
+        <h4>Add Person</h4>
         <label>Name</label>
         <input type="text" id="emp-name" placeholder="e.g. John">
-        <label>PIN <small>(optional — default is 0000, change it later with Reset PIN)</small></label>
-        <input type="password" id="emp-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="0000">
-        <button class="btn btn-primary btn-block" id="btn-add-emp">Add Employee</button>
+        <label>Type</label>
+        <select id="emp-type">
+          <option value="employee" selected>Employee</option>
+          <option value="proprietor">Proprietor</option>
+          <option value="other">Other</option>
+        </select>
+        <label>PIN <small>(optional — a default PIN is used if left blank, change it later with Reset PIN)</small></label>
+        <input type="password" id="emp-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="••••">
+        <button class="btn btn-primary btn-block" id="btn-add-emp">Add Person</button>
       </div>
 
       <div class="card proprietor-only">

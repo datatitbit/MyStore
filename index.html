@@ -33,11 +33,11 @@
       <input type="text" id="setup-store" name="store-name" placeholder="e.g. Mili's Shop" autocomplete="on">
       <label>Proprietor name (optional)</label>
       <input type="text" id="setup-name" placeholder="Default: Milly" value="Milly" autocomplete="off">
-      <label>Create a 4-digit PIN <small>(optional — default is 1234)</small></label>
-      <input type="tel" id="setup-pin" maxlength="4" inputmode="numeric" placeholder="1234" autocomplete="off">
+      <label>Create a 4-digit PIN <small>(optional — default is 1111)</small></label>
+      <input type="password" id="setup-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="1111" autocomplete="off">
       <div class="pin-row" id="setup-pin-dots"></div>
       <label>Repeat the PIN</label>
-      <input type="tel" id="setup-pin2" maxlength="4" inputmode="numeric" placeholder="1234" autocomplete="off">
+      <input type="password" id="setup-pin2" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="1111" autocomplete="off">
       <div class="pin-row" id="setup-pin2-dots"></div>
       <button class="btn btn-primary btn-big" id="btn-setup-done" aria-label="Save store setup and continue to login">Save &amp; Continue</button>
       <button class="btn btn-ghost btn-block" id="btn-setup-cancel">Cancel</button>
@@ -394,8 +394,8 @@
         <h4>Add Employee</h4>
         <label>Name</label>
         <input type="text" id="emp-name" placeholder="e.g. John">
-        <label>PIN <small>(optional — default is 1111, change it later with Reset PIN)</small></label>
-        <input type="tel" id="emp-pin" maxlength="4" inputmode="numeric" placeholder="1111">
+        <label>PIN <small>(optional — default is 0000, change it later with Reset PIN)</small></label>
+        <input type="password" id="emp-pin" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="0000">
         <button class="btn btn-primary btn-block" id="btn-add-emp">Add Employee</button>
       </div>
 
@@ -565,7 +565,7 @@
   <div class="modal-box small">
     <h2 id="pin-modal-title">Set new PIN</h2>
     <label>4-digit PIN</label>
-    <input type="tel" id="pin-new" maxlength="4" inputmode="numeric" placeholder="1234">
+    <input type="password" id="pin-new" maxlength="4" inputmode="numeric" pattern="[0-9]*" placeholder="••••">
     <div class="row">
       <button class="btn btn-ghost" data-close>Cancel</button>
       <button class="btn btn-primary" id="btn-save-pin">Save PIN</button>

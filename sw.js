@@ -1,5 +1,5 @@
 /* Shop Records service worker — offline-first cache */
-const CACHE = 'shop-records-v26';
+const CACHE = 'shop-records-v27';
 const ASSETS = [
   '/',
   '/index.html',

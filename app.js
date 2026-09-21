@@ -259,10 +259,10 @@
     if (!store) return toast('Please enter the store / business name.');
     let p1, p2;
     if (!p1raw && !p2raw) {
-      p1 = p2 = '1234';           // left blank → default PIN, changeable later with Reset PIN
+      p1 = p2 = '1111';           // left blank → default PIN, changeable later with Reset PIN
     } else {
       p1 = p1raw; p2 = p2raw;
-      if (!/^\d{4}$/.test(p1)) return toast('PIN must be exactly 4 digits (or leave blank for 1234).');
+      if (!/^\d{4}$/.test(p1)) return toast('PIN must be exactly 4 digits (or leave blank for 1111).');
       if (p1 !== p2) return toast('PINs do not match. Try again.');
     }
     data.settings.businessName = store;
@@ -272,11 +272,11 @@
     // explicitly added as Staff later (Settings → Users → Staff: On)
     const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true, isStaff: false };
     data.users.push(proprietor);
-    // default sales person (PIN 1111, renameable in Settings) — counted as Staff
-    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '1111', role: 'employee', active: true, isStaff: true });
+    // default sales person (PIN 0000, renameable in Settings) — counted as Staff
+    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '0000', role: 'employee', active: true, isStaff: true });
     persist();
     session = proprietor;
-    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' (PIN ' + p1 + ') · Sales Person 1 added (PIN 1111)');
+    toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Sales Person 1 added.');
     enterApp();
   });
 
@@ -1846,16 +1846,16 @@
   $('btn-add-emp').addEventListener('click', () => {
     const name = $('emp-name').value.trim();
     const pinInput = $('emp-pin').value.replace(/\D/g, '');
-    const pin = pinInput || '1111';           // default PIN for new employees
+    const pin = pinInput || '0000';           // default PIN for new employees
     if (!name) return toast('Enter the employee name.');
-    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 1111).');
+    if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 0000).');
     if (data.users.some((u) => u.name.toLowerCase() === name.toLowerCase()))
       return toast('A user with that name already exists.');
     data.users.push({ id: DB.uid(), name, pin, role: 'employee', active: true, isStaff: true });
     $('emp-name').value = ''; $('emp-pin').value = '';
     saveSettingsFromUI();
     renderSettings();
-    toast('Employee added ✓ ' + name + ' (PIN ' + pin + ')');
+    toast('Employee added ✓ ' + name);
   });
 
   /* rename / role / remove */
@@ -2174,7 +2174,7 @@
     { t: 'Recording a sale 💵', x: 'Tap Sales, then "+ New Sale". Pick the product — the price fills in by itself — enter the quantity, check the total, and save. Stock goes down automatically.' },
     { t: 'Account 🧾', x: 'The Account tab shows this month\'s money in, money out and balance. It is also where you add expenses like rent or buying stock.' },
     { t: 'Stock 📦', x: 'The Stock tab shows what is left. Each item has a reorder level — when stock reaches it, the app shows a Low warning so you know to buy more. Tap an item to add stock, use stock, or change its reorder level.' },
-    { t: 'People & PINs 🔐', x: 'The Proprietor controls everything. Sales people record sales only. The default PIN is 1234. The Proprietor can add people, rename them, reset PINs and change access under More → Settings & Users.' },
+    { t: 'People & PINs 🔐', x: 'The Proprietor controls everything. Sales people record sales only. Default PINs are 1111 for the Proprietor and 0000 for employees if left blank when adding them — always change these to something private. The Proprietor can add people, rename them, reset PINs and change access under More → Settings & Users.' },
     { t: 'Backup & sync ☁️', x: 'Under More → Settings, the Proprietor can connect Google Drive to save or load all records — useful when changing phones — and set up cloud sync so several devices share the same records.' },
     { t: 'Make it yours ⚙️', x: 'In Settings you can change the store name and details, add products with prices, add or remove units like kg or sachet, and restore defaults anytime. Tap the "?" button at the top to see this guide again.' },
   ];

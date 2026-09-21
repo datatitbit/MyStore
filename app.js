@@ -129,9 +129,9 @@
   });
   $('btn-confirm-no').addEventListener('click', () => closeModal('modal-confirm'));
 
-  /* ---------- login flow ---------- */
-  const LAST_USER_KEY = 'shop_records_last_user';
-
+  /* ---------- login flow ----------
+     Always: Store name shown -> choose your Type -> choose your name -> PIN.
+     No "remembered device" shortcut — Type is chosen every time, on purpose. */
   function renderLogin() {
     $('login-business-name').textContent = data.settings.businessName;
     const hasOwner = data.users.some((u) => u.role === 'proprietor');
@@ -140,15 +140,6 @@
     $('login-pick').classList.add('hidden');
     $('login-pin').classList.add('hidden');
     pickedLoginType = null;
-    if (hasOwner) {
-      // fast path: regular users of this phone go straight to their PIN
-      const lastId = localStorage.getItem(LAST_USER_KEY);
-      const last = lastId && data.users.find((u) => u.id === lastId && u.active !== false);
-      if (last) {
-        $('login-type').classList.add('hidden');
-        beginPin(last);
-      }
-    }
   }
 
   // step 1: choose your type (Proprietor / Employee / Other)
@@ -234,7 +225,6 @@
     if (pendingPinUser && pinBuffer === pendingPinUser.pin) {
       session = pendingPinUser;
       pinBuffer = '';
-      localStorage.setItem(LAST_USER_KEY, session.id);   // fast login next time
       enterApp();
     } else {
       toast('Wrong PIN. Try again.');
@@ -245,13 +235,8 @@
 
   $('btn-pin-back').addEventListener('click', () => {
     $('login-pin').classList.add('hidden');
-    if (pickedLoginType) {
-      renderUserList(pickedLoginType);
-      $('login-pick').classList.remove('hidden');
-    } else {
-      // came here via the fast (remembered-user) path — no type was chosen
-      $('login-type').classList.remove('hidden');
-    }
+    renderUserList(pickedLoginType);
+    $('login-pick').classList.remove('hidden');
     pinBuffer = '';
   });
 

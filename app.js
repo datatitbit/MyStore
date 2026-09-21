@@ -262,10 +262,12 @@
     data.settings.businessName = store;
     data.settings.store = data.settings.store || {};
     data.settings.store.name = store;
-    const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true };
+    // isStaff: false — the Proprietor doesn't show up in Attendance unless
+    // explicitly added as Staff later (Settings → Users → Staff: On)
+    const proprietor = { id: DB.uid(), name, pin: p1, role: 'proprietor', active: true, isStaff: false };
     data.users.push(proprietor);
-    // default sales person (PIN 1234, renameable in Settings)
-    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '1234', role: 'employee', active: true });
+    // default sales person (PIN 1234, renameable in Settings) — counted as Staff
+    data.users.push({ id: DB.uid(), name: 'Sales Person 1', pin: '1234', role: 'employee', active: true, isStaff: true });
     persist();
     session = proprietor;
     toast('Store "' + store + '" created ✓ Proprietor: ' + name + ' · Sales Person 1 added (PIN 1234)');
@@ -930,10 +932,15 @@
     return s;
   }
 
+  // "staff" for attendance purposes = active users explicitly marked isStaff
+  // (Settings → Users → Staff: On/Off). The Proprietor is NOT included by
+  // default — only if they turn Staff on for themselves.
+  function staffList() { return data.users.filter((u) => u.active !== false && u.isStaff); }
+
   function attendanceToday() {
     const dateStr = todayStr();
     const absent = absentIdsFor(dateStr);
-    const staff = data.users.filter((u) => u.active !== false);
+    const staff = staffList();
     const a = staff.filter((u) => absent.has(u.id)).length;
     return { present: staff.length - a, absent, total: staff.length };
   }
@@ -945,44 +952,51 @@
     const wh = data.settings.workHours || { start: '08:00', end: '17:00' };
     $('att-hours').textContent = (wh.start || '—') + ' – ' + (wh.end || '—');
     const workToday = isWorkDay(now);
-    const staff = data.users.filter((u) => u.active !== false);
+    const staff = staffList();
     const absent = absentIdsFor(dateStr);
     $('att-present').textContent = workToday ? String(staff.length - absent.size) : '—';
     $('att-absent').textContent = workToday ? String(absent.size) : '—';
     $('att-note').innerHTML = workToday
-      ? 'Everyone is <strong>Present (P)</strong> by default on work days. Tap a person only if they are <strong>Absent (A)</strong> — tap again to bring them back to Present.'
+      ? 'Everyone marked as <strong>Staff</strong> is <strong>Present (P)</strong> by default on work days. Tap <strong>A</strong> to mark someone Absent — tap <strong>P</strong> to bring them back.'
       : '🌴 Today is <strong>not a work day</strong> (see Settings → Work Days). Attendance is not counted today.';
     const el = $('att-list');
     if (!staff.length) {
       el.className = 'rows-empty';
-      el.textContent = 'No active staff yet. Add people in Settings → Users.';
+      el.textContent = 'No staff added yet. Go to Settings → Users and turn "Staff" on for the people who should show up here.';
       return;
     }
     el.className = '';
     el.innerHTML = staff.map((u) => {
       const isA = absent.has(u.id);
-      return '<div class="row-item att-row' + (isA ? ' absent' : '') + '" onclick="App.toggleAbsent(\'' + u.id + '\')">' +
+      return '<div class="row-item att-row' + (isA ? ' absent' : '') + '">' +
         '<div class="main"><div class="title">' + esc(u.name) +
         (u.role === 'proprietor' ? ' <span class="role-tag proprietor">Proprietor</span>' : '') + '</div>' +
         '<div class="sub">' + (isA ? 'marked absent today' : 'present by default') + '</div></div>' +
-        '<div class="val ' + (isA ? 'out' : 'in') + '">' + (isA ? 'A ✗' : 'P ✓') + '</div></div>';
+        '<div class="att-toggle">' +
+        '<button class="att-btn p' + (!isA ? ' active' : '') + '" onclick="App.setAttendance(\'' + u.id + '\',\'P\')" aria-label="Mark ' + esc(u.name) + ' Present">P</button>' +
+        '<button class="att-btn a' + (isA ? ' active' : '') + '" onclick="App.setAttendance(\'' + u.id + '\',\'A\')" aria-label="Mark ' + esc(u.name) + ' Absent">A</button>' +
+        '</div></div>';
     }).join('');
   }
 
-  window.App.toggleAbsent = function (userId) {
+  window.App.setAttendance = function (userId, status) {
     if (!isWorkDay(new Date())) return toast('Today is not a work day — attendance is not counted.');
     const dateStr = todayStr();
     const u = data.users.find((x) => x.id === userId);
     const existing = data.attendance.find((a) => a.date === dateStr && a.userId === userId);
-    if (existing) {
-      data.attendance = data.attendance.filter((a) => a !== existing);
-      toast((u ? u.name : 'Staff') + ' is back to Present ✓');
+    if (status === 'A') {
+      if (!existing) {
+        data.attendance.push({
+          id: DB.uid(), userId, userName: u ? u.name : 'Staff',
+          date: dateStr, ts: Date.now(), markedBy: session ? session.name : '',
+        });
+        toast((u ? u.name : 'Staff') + ' marked Absent (A) ✗');
+      } else return; // already Absent
     } else {
-      data.attendance.push({
-        id: DB.uid(), userId, userName: u ? u.name : 'Staff',
-        date: dateStr, ts: Date.now(), markedBy: session ? session.name : '',
-      });
-      toast((u ? u.name : 'Staff') + ' marked Absent (A) ✗');
+      if (existing) {
+        data.attendance = data.attendance.filter((a) => a !== existing);
+        toast((u ? u.name : 'Staff') + ' is back to Present ✓');
+      } else return; // already Present
     }
     persist();
     refreshAll();
@@ -1134,7 +1148,7 @@
     const tin = sum(sales, 'amount'), tout = sum(exps, 'amount');
     const periodName = { today: 'Today', week: 'This Week', month: 'This Month', year: 'This Year' }[reportPeriod];
     const att = attendanceInPeriod(reportPeriod);
-    const staffCount = data.users.filter((u) => u.active).length;
+    const staffCount = staffList().length;
     const { rank: bestRank } = sellerStats(sales);
     const bestArr = bestRank.slice(0, 5);
 
@@ -1468,7 +1482,7 @@
     try {
       const now = new Date();
       const monthName = now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-      const staff = data.users.filter((u) => u.active !== false).map((u) => u.name);
+      const staff = staffList().map((u) => u.name);
       if (!staff.length) staff.push('Staff 1', 'Staff 2');
       const t = tplDoc('STAFF ATTENDANCE SHEET — ' + monthName.toUpperCase(),
         'Everyone is P (Present) by default on work days. Write A ONLY for staff who are absent. Work days: ' +
@@ -1567,9 +1581,13 @@
     $('user-manage-list').innerHTML = data.users.map((u) => {
       const isSelf = u.id === session.id;
       const activeProp = data.users.filter((x) => x.role === 'proprietor' && x.active !== false);
-      const isLastProp = u.role === 'proprietor' && activeOwners.length === 1;
+      const isLastProp = u.role === 'proprietor' && activeProp.length === 1;
       const off = u.active === false ? ' <span class="badge deactivated">Off</span>' : '';
-      let btns = '<button class="btn btn-small btn-ghost" onclick="App.renameUser(\'' + u.id + '\')">Rename</button>';
+      // Staff toggle: controls whether this person shows up in Attendance.
+      // Available for everyone, including the Proprietor, so they can add
+      // themselves to Attendance on purpose if they want to.
+      let btns = '<button class="btn btn-small btn-ghost" onclick="App.renameUser(\'' + u.id + '\')">Rename</button>' +
+        ' <button class="btn btn-small btn-ghost" onclick="App.toggleStaff(\'' + u.id + '\')">Staff: ' + (u.isStaff ? 'On' : 'Off') + '</button>';
       if (!isSelf) {
         btns += ' <button class="btn btn-small btn-ghost" onclick="App.resetPin(\'' + u.id + '\')">Reset PIN</button>';
         if (u.role === 'proprietor') {
@@ -1678,11 +1696,18 @@
     if (data.products.some((p) => p.name.toLowerCase() === name.toLowerCase()))
       return toast('A product with that name already exists.');
     data.products.push({ id: DB.uid(), name, price, unit, createdAt: Date.now() });
+    // keep Stock in sync with Products: every product gets a stock counter
+    // from day one (starting at 0), so recording a sale always has a
+    // matching stock item to deduct from — use Stock → tap the item to
+    // add the starting quantity you actually have.
+    if (!data.stock.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
+      data.stock.push({ id: DB.uid(), name, qty: 0, reorder: 5, updatedAt: Date.now() });
+    }
     $('prod-name').value = '';
     $('prod-price').value = '';
     persist();
     renderSettings();
-    toast('Product added ✓ ' + name);
+    toast('Product added ✓ ' + name + ' — also added to Stock, tap it to set how many you have.');
   });
 
   let editProductId = null;
@@ -1820,7 +1845,7 @@
     if (pinInput && !/^\d{4}$/.test(pinInput)) return toast('PIN must be exactly 4 digits (or leave blank for 1234).');
     if (data.users.some((u) => u.name.toLowerCase() === name.toLowerCase()))
       return toast('A user with that name already exists.');
-    data.users.push({ id: DB.uid(), name, pin, role: 'employee', active: true });
+    data.users.push({ id: DB.uid(), name, pin, role: 'employee', active: true, isStaff: true });
     $('emp-name').value = ''; $('emp-pin').value = '';
     saveSettingsFromUI();
     renderSettings();
@@ -1923,6 +1948,19 @@
     saveSettingsFromUI();
     renderSettings();
     toast(u.name + (u.active ? ' reactivated ✓' : ' deactivated. Their past sales stay in history.'));
+  };
+
+  /* Staff flag: controls whether this person shows up in Attendance. Anyone
+     can be toggled, including the Proprietor themselves. */
+  App.toggleStaff = function (id) {
+    const u = data.users.find((x) => x.id === id);
+    if (!u) return;
+    u.isStaff = !u.isStaff;
+    saveSettingsFromUI();
+    renderSettings();
+    toast(u.name + (u.isStaff
+      ? ' added to Staff — will show up in Attendance ✓'
+      : ' removed from Staff — will no longer show up in Attendance.'));
   };
 
   /* per-user dashboard access (proprietor-controlled; default on) */

@@ -317,6 +317,13 @@ input:focus, select:focus { outline: 2px solid var(--green); border-color: var(-
 
 /* Attendance rows */
 .att-row.absent { background: #fdecec; border-radius: 10px; padding-left: 10px; padding-right: 10px; }
+.att-toggle { display: flex; gap: 6px; flex: 0 0 auto; }
+.att-btn {
+  width: 36px; height: 36px; border-radius: 10px; border: 1.5px solid #d3dae2;
+  background: #fff; color: var(--muted); font-size: 14px; font-weight: 800; cursor: pointer;
+}
+.att-btn.p.active { background: var(--green); border-color: var(--green); color: #fff; }
+.att-btn.a.active { background: var(--red); border-color: var(--red); color: #fff; }
 
 /* Work day ticks in settings */
 .day-ticks { display: flex; flex-wrap: wrap; gap: 10px 14px; }

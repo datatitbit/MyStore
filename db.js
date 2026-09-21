@@ -68,6 +68,12 @@
         if (s.reorder == null) s.reorder = s.low == null ? 5 : s.low;
         delete s.low;
       });
+      // migrate: explicit "Staff" flag for Attendance — employees show up by
+      // default (unchanged behaviour), the Proprietor does not unless added
+      // on purpose in Settings → Users (Staff: On)
+      merged.users.forEach((u) => {
+        if (u.isStaff == null) u.isStaff = u.role !== 'proprietor';
+      });
       return merged;
     } catch (e) {
       console.error('Data load failed, starting blank', e);

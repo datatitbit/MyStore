@@ -236,6 +236,29 @@
       </div>
     </section>
 
+    <!-- SYNC (Google Sheets backup — main-page tab, on by default) -->
+    <section id="page-sync" class="page">
+      <h2 class="page-title">Sync &amp; Backup</h2>
+      <div class="card">
+        <h3>🔄 Google Sheets Backup</h3>
+        <div class="balance-row">
+          <span id="drive-pill" class="drive-pill none">●</span>
+          <strong id="drive-status-text">Checking…</strong>
+        </div>
+        <p class="muted" id="drive-status-sub">One Google Sheet “MyStore Records” in the shop's Google Drive — tabs: Sales, Expenses, Stock, Products, Staff Attendance, Users.</p>
+        <button class="btn btn-primary btn-block" id="btn-sync-drive">📊 Sync to Google Sheets</button>
+        <label class="check" style="margin-top:8px">
+          <input type="checkbox" id="set-drive-auto">
+          <span>Auto-backup after changes (when online, proprietor)</span>
+        </label>
+        <p class="muted small-note" id="drive-setup-hint">Not connected yet? Proprietor: More → Settings → Google Drive Backup → Connect Google Account (one-time sign-in).</p>
+      </div>
+      <div class="card proprietor-only">
+        <h3>Cloud Sync <small>(multi-device)</small></h3>
+        <p class="muted">To sync live between several phones, set up Cloud Sync in More → Settings. Until then this phone keeps records offline and backs them up to the Google Sheet above.</p>
+      </div>
+    </section>
+
     <!-- MORE (proprietor pages links) -->
     <section id="page-more" class="page">
       <div class="more-list proprietor-only">
@@ -432,9 +455,19 @@
           <button class="btn btn-block hidden" id="btn-drive-save-id">Save</button>
         </div>
         <div class="row">
-          <button class="btn btn-primary btn-block" id="btn-drive-save">⬆ Save to Google Drive</button>
+          <button class="btn btn-primary btn-block" id="btn-drive-sheets">📊 Sync to Google Sheets</button>
+        </div>
+        <p class="muted" style="margin-top:6px">Creates a <strong>“MyStore Records”</strong> Google Sheet (with tabs: Sales, Expenses, Stock, Products, Staff Attendance, Users) inside the “MyStore Records” Drive folder — updating it in place, never duplicating. Also refreshes the CSV copies and the JSON restore file.</p>
+        <div class="row">
+          <button class="btn btn-block" id="btn-drive-save">⬆ Save Backup (JSON)</button>
           <button class="btn btn-block" id="btn-drive-load">⬇ Load from Google Drive</button>
         </div>
+        <label class="check" style="margin-top:8px">
+          <input type="checkbox" id="set-autodrive">
+          <span>Auto-backup to Google Drive after changes (same switch as the Sync tab)</span>
+        </label>
+        <p class="muted" style="margin-top:6px">Uses the connected Google account. To use a different Google account, tap below and then Save/Load — it will ask which account to use.</p>
+        <button class="btn btn-ghost btn-small btn-block" id="btn-drive-switch">Switch Google Account</button>
       </div>
 
       <div class="card proprietor-only">
@@ -471,6 +504,7 @@
     <button data-page="page-out" class="nav-btn"><span>🧾</span>Account</button>
     <button data-page="page-stock" class="nav-btn"><span>📦</span>Stock</button>
     <button data-page="page-attendance" class="nav-btn"><span>🙋</span>Staff</button>
+    <button data-page="page-sync" class="nav-btn" id="nav-sync"><span>🔄</span>Sync</button>
     <button data-page="page-more" class="nav-btn"><span>☰</span>More</button>
   </nav>
 </div>

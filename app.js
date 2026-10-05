@@ -34,12 +34,14 @@
     data.updatedAt = Date.now();
     DB.save(data);
     if (window.Sync) Sync.scheduleSync();
+    if (window.Sync && Sync.maybeDriveBackup) Sync.maybeDriveBackup();   // agentic: any saved change backs itself up to Google Sheets
   }
 
   // exposed for sync.js
   App.getData = function () { return data; };
   App.toast = toast;
   App.askConfirm = askConfirm;
+  App.isProprietor = function () { return !!(session && session.role === 'proprietor'); };
   App.replaceData = function (d) {
     data = d;
     DB.save(data);
@@ -348,6 +350,7 @@
     $(pageId).classList.add('active');
     document.querySelectorAll('.nav-btn').forEach((b) =>
       b.classList.toggle('active', b.dataset.page === pageId));
+    if (pageId === 'page-sync') renderDriveStatus();
     window.scrollTo(0, 0);
   }
 
@@ -1572,6 +1575,7 @@
     $('set-currency-custom').classList.toggle('hidden', data.settings.currency !== 'CUSTOM');
     $('set-currency-custom').value = data.settings.customCurrency || '';
     $('set-applock').checked = !!data.settings.appLock;
+    $('set-autodrive').checked = !!data.settings.autoDriveBackup;
     // store details
     const st = data.settings.store || {};
     $('set-store-name').value = st.name || data.settings.businessName || '';
@@ -1646,10 +1650,11 @@
     data.settings.currency = $('set-currency').value;
     data.settings.customCurrency = $('set-currency-custom').value.trim();
     data.settings.appLock = $('set-applock').checked;
+    data.settings.autoDriveBackup = $('set-autodrive').checked;
     persist();
     $('hdr-business').textContent = data.settings.businessName;
   }
-  ['set-business-name', 'set-currency', 'set-currency-custom', 'set-applock'].forEach((id) =>
+  ['set-business-name', 'set-currency', 'set-currency-custom', 'set-applock', 'set-autodrive'].forEach((id) =>
     $(id).addEventListener('change', saveSettingsFromUI));
   $('set-currency').addEventListener('change', () => {
     $('set-currency-custom').classList.toggle('hidden', $('set-currency').value !== 'CUSTOM');
@@ -2100,6 +2105,31 @@
     toast('Google account connected ✓ You can now save/load backups.');
   });
 
+  $('btn-drive-switch').addEventListener('click', () => {
+    if (!window.Drive) return;
+    Drive._reset();
+    toast('Google account forgotten. Next Drive Save/Load will ask which Google account to use.', { long: true });
+  });
+
+  $('btn-drive-sheets').addEventListener('click', () => {
+    if (!navigator.onLine) return toast('No internet right now. Try again when online.');
+    if (!window.Drive) return;
+    if (!Drive.hasClientId()) {
+      $('drive-config-area').classList.remove('hidden');
+      $('btn-drive-save-id').classList.remove('hidden');
+      $('btn-drive-setup').classList.add('hidden');
+      return toast('First tap "Connect Google Account" and enter your Google Client ID (see docs/GDRIVE-SETUP.md).', { long: true });
+    }
+    setBusy($('btn-drive-sheets'), true, '⏳ Syncing to Google Sheets…');
+    toast('Syncing to Google Sheets…', { long: true });
+    Drive.syncSheetToDrive()
+      .then(({ folder, sheet, tabs }) => {
+        toast('Synced Google Sheet "' + sheet.name + '" ✓ (' + tabs.length + ' tabs updated, in folder "' + folder.name + '")', { long: true });
+      })
+      .catch((e) => toast(e.message || 'Sync failed.', { long: true }))
+      .finally(() => setBusy($('btn-drive-sheets'), false));
+  });
+
   /* button busy feedback: spinner text + disabled while an operation runs */
   function setBusy(btn, busy, busyText) {
     if (!btn) return;
@@ -2163,6 +2193,82 @@
       .catch((e) => toast(e.message || 'Load failed.', { long: true }))
       .finally(() => { setBusy($('btn-drive-load'), false); setBusy($('btn-drive-save'), false); });
   });
+
+  /* ---------- Sync tab on the main page (Google Sheets backup) ---------- */
+  const DRIVE_STATES = {
+    not_connected: { cls: 'none', label: 'Not connected yet' },
+    offline: { cls: 'off', label: 'Offline — will back up when online' },
+    never: { cls: 'pending', label: 'Connected — not backed up yet' },
+    syncing: { cls: 'pending', label: 'Backing up to Google Sheets…' },
+    synced: { cls: 'ok', label: '✓ Backed up to Google Sheets' },
+    error: { cls: 'err', label: 'Backup failed — will retry' },
+  };
+  let driveSyncing = false;
+  let driveOutcome = '';          // '' | 'synced' | 'error' since last attempt
+
+  function renderDriveStatus() {
+    const pill = $('drive-pill');
+    if (!pill) return;
+    const connected = !!(window.Drive && Drive.hasClientId());
+    let state;
+    if (!connected) state = 'not_connected';
+    else if (!navigator.onLine) state = 'offline';
+    else if (driveSyncing) state = 'syncing';
+    else if (driveOutcome === 'error') state = 'error';
+    else state = data.settings.lastDriveBackupAt ? 'synced' : 'never';
+    const info = DRIVE_STATES[state];
+    pill.classList.remove('ok', 'off', 'pending', 'err', 'none');
+    pill.classList.add(info.cls);
+    pill.textContent = '●';
+    $('drive-status-text').textContent = info.label;
+    const last = data.settings.lastDriveBackupAt;
+    $('drive-status-sub').textContent = (connected
+      ? (last ? 'Last backup: ' + new Date(last).toLocaleString() + '. ' : 'No backup yet — tap the button below. ')
+      : 'Connect the shop Google account (one-time) to enable backup. ')
+      + 'Sheet “MyStore Records” in Drive — tabs: Sales, Expenses, Stock, Products, Staff Attendance, Users. Updated in place, never duplicated; the old Google Doc is left untouched.';
+    $('set-drive-auto').checked = !!data.settings.autoDriveBackup;
+    $('btn-sync-drive').disabled = !connected;
+    $('drive-setup-hint').classList.toggle('hidden', connected);
+  }
+
+  function doDriveSync() {
+    if (!(window.Drive && Drive.hasClientId())) {
+      driveOutcome = '';
+      return toast('Connect the Google account first: More → Settings → Google Drive Backup (one-time).');
+    }
+    if (!navigator.onLine) return toast('No internet right now. Will back up automatically when back online.');
+    driveSyncing = true;
+    renderDriveStatus();
+    setBusy($('btn-sync-drive'), true, '⏳ Syncing to Google Sheets…');
+    Drive.syncSheetToDrive()
+      .then(() => {
+        data.settings.lastDriveBackupAt = Date.now();
+        DB.save(data);
+        driveOutcome = 'synced';
+        toast('Synced ✓ Google Sheet “MyStore Records” is up to date.', { long: true });
+      })
+      .catch((e) => {
+        driveOutcome = 'error';
+        toast(e.message || 'Sync failed — try again.', { long: true });
+      })
+      .finally(() => {
+        driveSyncing = false;
+        setBusy($('btn-sync-drive'), false);
+        renderDriveStatus();
+      });
+  }
+
+  $('btn-sync-drive').addEventListener('click', doDriveSync);
+  $('set-drive-auto').addEventListener('change', () => {
+    data.settings.autoDriveBackup = $('set-drive-auto').checked;
+    DB.save(data);
+    toast($('set-drive-auto').checked
+      ? 'Auto-backup ON ✓ records back up to Google Sheets by themselves (when online).'
+      : 'Auto-backup off. You can still sync manually.');
+    if ($('set-drive-auto').checked && window.Sync) Sync.maybeDriveBackup();
+  });
+  window.addEventListener('online', () => renderDriveStatus());
+  window.addEventListener('offline', () => renderDriveStatus());
 
   /* backup & restore */
   $('btn-backup').addEventListener('click', () => {

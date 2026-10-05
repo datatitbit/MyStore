@@ -163,6 +163,7 @@
         saveData(merged);
         setStatus('synced');
         if (appliedCb) appliedCb();
+        maybeAutoDriveBackup();
         return true;
       })
       .catch((err) => {
@@ -179,6 +180,44 @@
   function exportDoc(d) {
     const copy = JSON.parse(JSON.stringify(d));
     return copy;
+  }
+
+  /* ---------- auto-backup to Google Drive after a successful sync OR any saved change ----------
+     Proprietor-only, rate-limited to at most one backup per 10 minutes. Writes the
+     last-backup stamp DIRECTLY to localStorage (not via persist/saveData) so we don't
+     trigger another scheduled sync in response. Any failure is silent — the Sync tab
+     remains the manual fallback. */
+  const AUTO_BACKUP_MIN_INTERVAL = 10 * 60 * 1000;
+  let lastAutoBackupAt = 0;   // in-session rate limit (persisted stamp only survives reloads)
+  function maybeAutoDriveBackup() {
+    try {
+      const d = getData();
+      if (!d || !d.settings || !d.settings.autoDriveBackup) return;
+      if (!(window.Drive && Drive.hasClientId())) return;          // not set up yet
+      if (!(window.App && App.isProprietor && App.isProprietor())) return;   // proprietor session only
+      if (!navigator.onLine) return;
+      const last = Math.max(d.settings.lastDriveBackupAt || 0, lastAutoBackupAt);
+      if (Date.now() - last < AUTO_BACKUP_MIN_INTERVAL) return;    // rate-limit
+      lastAutoBackupAt = Date.now();
+      setTimeout(() => {
+        const backupFn = (window.Drive && (Drive.syncSheetToDrive || Drive.syncSheetsToDrive)) || Drive.saveToDrive;
+        backupFn.call(Drive)
+          .then(() => {
+            try {
+              const cur = JSON.parse(localStorage.getItem(window.DB.KEY));
+              if (cur && cur.settings) {
+                cur.settings.lastDriveBackupAt = Date.now();
+                cur.updatedAt = Date.now();
+                localStorage.setItem(window.DB.KEY, JSON.stringify(cur));
+              }
+            } catch (e) { /* non-fatal */ }
+            const mem = getData();
+            if (mem && mem.settings) mem.settings.lastDriveBackupAt = Date.now(); // keep stamp across future persists
+            console.log('[MyStore] Auto-backup to Google Drive complete (spreadsheets + JSON)');
+          })
+          .catch((e) => console.warn('[MyStore] Auto-backup skipped:', e && e.message));
+      }, 800);
+    } catch (e) { /* never let auto-backup break sync */ }
   }
 
   /* ---------- triggers ---------- */
@@ -200,8 +239,10 @@
     init(cb, onApplied) { statusCb = cb; appliedCb = onApplied; ensureIds(); },
     syncNow,
     scheduleSync,
+    maybeDriveBackup: maybeAutoDriveBackup,   // called by app.js after ANY saved change (rate-limited, proprietor-only)
     // test hooks (used by automated verification; not part of the UI)
     _merge: merge,
+    _maybeAutoDriveBackup: maybeAutoDriveBackup,
     _unionById: unionById,
     _mergeStock: mergeStock,
     saveConfig(cfg) {

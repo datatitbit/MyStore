@@ -20,6 +20,7 @@
         units: DEFAULT_UNITS.slice(),      // units of measurement, editable
         budgets: {},
         appLock: false,
+        autoDriveBackup: true, // auto-backup to Google Sheets after saved changes (proprietor, online) — ON by default; Sync tab can turn it off
         driveClientId: '',   // Google OAuth Client ID for Drive backup
         store: { name: '', contact: '', phone: '', email: '', website: '' },
         workDays: [1, 1, 1, 1, 1, 0, 0],   // Mon..Sun — 1 = work day (Settings → Work Days)

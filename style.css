@@ -93,6 +93,13 @@ body {
 .sync-pill.pending { background: #fff; color: var(--amber); animation: pulse 1.2s infinite; }
 .sync-pill.err { background: #fff; color: var(--red); }
 .sync-pill.none { background: rgba(255,255,255,.15); color: rgba(255,255,255,.55); }
+/* Drive backup status dot on the Sync tab */
+.drive-pill { font-size: 18px; line-height: 1; }
+.drive-pill.ok { color: var(--green-dark); }
+.drive-pill.off { color: #e08e0b; }
+.drive-pill.pending { color: var(--amber); animation: pulse 1.2s infinite; }
+.drive-pill.err { color: var(--red); }
+.drive-pill.none { color: #b0b0b0; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 .small-note { font-size: 13px; margin: 10px 0 0; word-break: break-all; }
 #main { flex: 1; max-width: 560px; width: 100%; margin: 0 auto; padding: 14px 14px 92px; }

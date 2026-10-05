@@ -1,23 +1,32 @@
-/* ===== drive.js — Google Drive backup / restore (proprietor only) =====
+/* ===== drive.js — Google Drive backup / restore (owner only) =====
  *
  * Uses Google Identity Services (GIS) OAuth token client + Drive REST API v3
- * via plain fetch (no gapi client needed). One-time setup: proprietor creates a
- * free Google Cloud OAuth Client ID (docs/GDRIVE-SETUP.md) and saves it in
- * Settings → Google Drive Backup.
+ * and Google Sheets API v4 via plain fetch (no gapi client needed).
+ * One-time setup: owner creates a free Google Cloud OAuth Client ID
+ * (docs/GDRIVE-SETUP.md) and saves it in Settings → Google Drive Backup.
  *
  * Flow:
  *   Save: find 'shop-records-backup.json' on Drive → update it, or create it.
  *   Load: download that file → validate → replace local data (with confirm).
+ *   Sync: write every section into a real Google Sheet (one tab per section)
+ *         inside the dedicated "MyStore Records" folder, + the JSON backup.
  */
 (function () {
   'use strict';
 
   const FILE_NAME = 'shop-records-backup.json';
   const MIME = 'application/json';
-  const SCOPE = 'https://www.googleapis.com/auth/drive.file';
+  const CSV_MIME = 'text/csv';
+  const FOLDER_MIME = 'application/vnd.google-apps.folder';
+  const SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
+  const SCOPE = [
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/spreadsheets',
+  ].join(' ');
   const GIS_SRC = 'https://accounts.google.com/gsi/client';
   const API = 'https://www.googleapis.com/drive/v3';
   const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+  const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
   let tokenClient = null;
   let accessToken = null;
@@ -125,11 +134,12 @@
     });
   }
 
-  function uploadCreate(json) {
-    const metadata = { name: FILE_NAME, mimeType: MIME };
+  function uploadCreate(name, content, mime, parentId) {
+    const metadata = { name, mimeType: mime || MIME };
+    if (parentId) metadata.parents = [parentId];
     const form = new FormData();
     form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', new Blob([json], { type: MIME }));
+    form.append('file', new Blob([content], { type: mime || MIME }));
     return fetch(UPLOAD + '/files?uploadType=multipart&fields=id', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + accessToken },
@@ -140,15 +150,69 @@
     });
   }
 
-  function uploadUpdate(fileId, json) {
+  function uploadUpdate(fileId, content, mime) {
     return fetch(UPLOAD + '/files/' + fileId + '?uploadType=media', {
       method: 'PATCH',
-      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': MIME },
-      body: json,
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': mime || MIME },
+      body: content,
     }).then((res) => {
       if (!res.ok) throw new Error('Google Drive update failed (' + res.status + ').');
       return res.json();
     });
+  }
+
+  /* ---------- dedicated backup folder ---------- */
+  function folderName() {
+    const d = getData();
+    return (((d && d.settings && d.settings.businessName) || 'MyStore') + ' Records').replace(/[\\/:*?"<>|]/g, ' ').trim();
+  }
+
+  function rememberFolderId(id) {
+    const d = getData();
+    if (d && d.settings) d.settings.driveFolderId = id;   // in-memory so future persists keep it
+    try {
+      const raw = JSON.parse(localStorage.getItem(window.DB.KEY));
+      if (raw && raw.settings) {
+        raw.settings.driveFolderId = id;
+        localStorage.setItem(window.DB.KEY, JSON.stringify(raw));
+      }
+    } catch (e) { /* non-fatal */ }
+  }
+
+  function createFolder(name) {
+    return gapiFetch(API + '/files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, mimeType: FOLDER_MIME }),
+    }).then((j) => {
+      if (!j || !j.id) throw new Error('Could not create the Drive folder.');
+      rememberFolderId(j.id);
+      return { id: j.id, name };
+    });
+  }
+
+  function ensureFolder() {
+    const d = getData();
+    const cached = d && d.settings && d.settings.driveFolderId;
+    if (cached) return Promise.resolve({ id: cached, name: folderName() });
+    const nm = folderName();
+    const q = encodeURIComponent("name='" + nm.replace(/'/g, "\\'") + "' and mimeType='" + FOLDER_MIME + "' and trashed=false");
+    return gapiFetch(API + '/files?q=' + q + '&fields=files(id,name)')
+      .then((j) => {
+        if (j.files && j.files[0]) {
+          rememberFolderId(j.files[0].id);
+          return { id: j.files[0].id, name: nm };
+        }
+        return createFolder(nm);
+      });
+  }
+
+  function findInFolder(folderId, name) {
+    const q = encodeURIComponent(
+      "name='" + name.replace(/'/g, "\\'") + "' and '" + folderId + "' in parents and trashed=false"
+    );
+    return gapiFetch(API + '/files?q=' + q + '&fields=files(id,name,modifiedTime)')
+      .then((j) => (j.files || []));
   }
 
   /* ---------- record hygiene: strictly prevent repeated rows ---------- */
@@ -171,23 +235,235 @@
     return d;
   }
 
+  /* ---------- section builders — arrays of rows (header first) ----------
+     One source of truth for both the CSV files and the Google Sheet tabs. */
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtDate(ts) {
+    const dt = new Date(ts);
+    return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate());
+  }
+  function fmtDateTime(ts) {
+    const dt = new Date(ts);
+    return fmtDate(ts) + ' ' + pad2(dt.getHours()) + ':' + pad2(dt.getMinutes());
+  }
+
+  function salesRows(d) {
+    return [['Date', 'Item', 'Quantity', 'Unit', 'Unit Price', 'Total', 'Recorded By']]
+      .concat((d.sales || []).slice()
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .map((s) => [fmtDateTime(s.ts), s.item, s.qty, s.unit || '',
+          s.price != null ? s.price : '', s.amount, s.userName || '']));
+  }
+
+  function expensesRows(d) {
+    return [['Date', 'Category', 'Details', 'Amount', 'Recorded By']]
+      .concat((d.expenses || []).slice()
+        .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+        .map((x) => [fmtDateTime(x.ts), x.category || '', x.note || '', x.amount, x.userName || '']));
+  }
+
+  function stockRows(d) {
+    const unitOf = (name) => {
+      const p = (d.products || []).find((p) => p.name === name);
+      return p ? (p.unit || '') : '';
+    };
+    return [['Item', 'Quantity', 'Unit', 'Reorder Level', 'Status']]
+      .concat((d.stock || []).slice()
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .map((s) => [s.name, s.qty, unitOf(s.name), s.reorder != null ? s.reorder : 5,
+          s.qty <= (s.reorder != null ? s.reorder : 5) ? 'LOW' : 'ok']));
+  }
+
+  function productsRows(d) {
+    return [['Product', 'Price', 'Unit']]
+      .concat((d.products || []).slice()
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .map((p) => [p.name, p.price != null ? p.price : '', p.unit || '']));
+  }
+
+  function usersRows(d) {
+    return [['Name', 'Role', 'Status']]   // PINs are never exported
+      .concat((d.users || []).map((u) => [
+        u.name, u.role === 'owner' ? 'Owner' : 'Sales',
+        u.active === false ? 'Inactive' : 'Active',
+      ]));
+  }
+
+  function attendanceRows(d) {
+    const dates = Array.from(new Set((d.attendance || []).map((a) => a.date))).sort().reverse();
+    const ids = [];
+    (d.users || []).forEach((u) => { if (u.active !== false && ids.indexOf(u.id) < 0) ids.push(u.id); });
+    (d.attendance || []).forEach((a) => { if (ids.indexOf(a.userId) < 0) ids.push(a.userId); });
+    const names = ids.map((id) => {
+      const u = (d.users || []).find((x) => x.id === id);
+      return u ? u.name : '(removed)';
+    });
+    return [['Date'].concat(names)]
+      .concat(dates.map((date) => [date].concat(ids.map((id) =>
+        (d.attendance || []).some((a) => a.date === date && a.userId === id) ? 'A' : 'P'))));
+  }
+
+  const SHEETS = [
+    { tab: 'Sales', file: 'Sales.csv', rows: salesRows },
+    { tab: 'Expenses', file: 'Expenses.csv', rows: expensesRows },
+    { tab: 'Stock', file: 'Stock.csv', rows: stockRows },
+    { tab: 'Products', file: 'Products.csv', rows: productsRows },
+    { tab: 'Staff Attendance', file: 'Staff Attendance.csv', rows: attendanceRows },
+    { tab: 'Users', file: 'Users.csv', rows: usersRows },
+  ];
+
+  /* CSV rendering kept for the downloadable/legacy file copies */
+  function csvCell(v) {
+    if (v == null) return '';
+    const s = String(v);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function rowsToCsv(all) {
+    return '﻿' + all.map((r) => r.map(csvCell).join(',')).join('\r\n');
+  }
+
+  /* ---------- one file in the folder: create or update in place, drop extras ---------- */
+  function syncOneFile(folder, file) {
+    const mime = file.name.slice(-5) === '.json' ? MIME : CSV_MIME;
+    return findInFolder(folder.id, file.name).then((found) => {
+      const main = found[0] || null;
+      const extras = found.slice(1);
+      const chain = main
+        ? uploadUpdate(main.id, file.text, mime).then((j) => j.id || main.id)
+        : uploadCreate(file.name, file.text, mime, folder.id).then((j) => j.id);
+      return chain
+        .then((id) => Promise.allSettled(extras.map((f) => deleteFile(f.id))).then(() => id))
+        .then((id) => ({ name: file.name, action: main ? 'updated' : 'created', id }));
+    });
+  }
+
   /* ---------- public actions ---------- */
   function saveToDrive() {
     if (!clientId()) return Promise.reject(new Error('No Google Client ID. Tap "Connect Google Account" first.'));
+    const json = JSON.stringify(sanitizeData(getData()), null, 2);
     return getToken()
-      .then(() => findBackupFiles())
-      .then((files) => {
-        // upload the sanitized snapshot; update the existing backup in place and
-        // remove any extra copies so repeated saves never create duplicates
-        const json = JSON.stringify(sanitizeData(getData()), null, 2);
-        const main = files[0] || null;
-        const extras = files.slice(1);
-        const chain = main
-          ? uploadUpdate(main.id, json)
-          : uploadCreate(json);
-        return chain.then((res) =>
-          Promise.allSettled(extras.map((f) => deleteFile(f.id))).then(() => res));
+      .then(() => ensureFolder())
+      .then((folder) => syncOneFile(folder, { name: FILE_NAME, text: json }))
+      // self-heal: remove same-named backups living OUTSIDE the folder (e.g. old root copies)
+      .then((res) => findBackupFiles().then((all) =>
+        Promise.allSettled(all.filter((f) => f.id !== res.id).map((f) => deleteFile(f.id)))
+          .then(() => res)));
+  }
+
+  /* Legacy sync: write every section as a CSV file plus the full JSON backup
+     into the dedicated Drive folder — creating or updating in place, never
+     duplicating. Kept as a fallback; the button now uses syncSheetToDrive(). */
+  function syncSheetsToDrive() {
+    if (!clientId()) return Promise.reject(new Error('No Google Client ID. Tap "Connect Google Account" first.'));
+    const d = getData();
+    return getToken()
+      .then(() => ensureFolder())
+      .then((folder) => {
+        const files = SHEETS.map((s) => ({ name: s.file, text: rowsToCsv(s.rows(d)) }));
+        files.push({ name: FILE_NAME, text: JSON.stringify(sanitizeData(d), null, 2) });
+        let seq = Promise.resolve([]);
+        files.forEach((f) => {
+          seq = seq.then((results) => syncOneFile(folder, f).then((r) => results.concat(r)));
+        });
+        return seq.then((results) => ({ folder, results }));
       });
+  }
+
+  /* ---------- Google Sheets API: one workbook, one tab per section ---------- */
+  function sheetTitle() { return folderName(); }   // same name as the folder
+
+  function findSpreadsheetInFolder(folderId) {
+    const q = encodeURIComponent(
+      "name='" + sheetTitle().replace(/'/g, "\\'") + "' and mimeType='" + SHEET_MIME +
+      "' and '" + folderId + "' in parents and trashed=false"
+    );
+    return gapiFetch(API + '/files?q=' + q + '&fields=files(id,name)')
+      .then((j) => (j.files && j.files[0]) || null);
+  }
+
+  function createSpreadsheetInFolder(folderId) {
+    return gapiFetch(API + '/files', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sheetTitle(), mimeType: SHEET_MIME, parents: [folderId] }),
+    }).then((j) => {
+      if (!j || !j.id) throw new Error('Could not create the Google Sheet.');
+      return { id: j.id, name: sheetTitle() };
+    });
+  }
+
+  function listTabNames(spreadsheetId) {
+    return gapiFetch(SHEETS_API + '/' + spreadsheetId + '?fields=sheets.properties.title')
+      .then((j) => ((j && j.sheets) || []).map((s) => s.properties.title));
+  }
+
+  function ensureSheetTabs(spreadsheetId) {
+    return listTabNames(spreadsheetId).then((names) => {
+      const requests = SHEETS
+        .filter((s) => names.indexOf(s.tab) < 0)
+        .map((s) => ({ addSheet: { properties: { title: s.tab } } }));
+      if (!requests.length) return null;
+      return gapiFetch(SHEETS_API + '/' + spreadsheetId + '/batchUpdate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requests }),
+      });
+    });
+  }
+
+  /* Write a tab's full contents, then clear any leftover rows below them. */
+  function writeSheetTab(spreadsheetId, tab, values) {
+    const quoted = "'" + tab.replace(/'/g, "''") + "'";
+    const putRange = quoted + '!A1';
+    return gapiFetch(SHEETS_API + '/' + spreadsheetId + '/values/' + encodeURIComponent(putRange) +
+      '?valueInputOption=RAW', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ range: putRange, majorDimension: 'ROWS', values }),
+    }).then(() => {
+      const tail = quoted + '!A' + (values.length + 1) + ':Z1000';
+      return gapiFetch(SHEETS_API + '/' + spreadsheetId + '/values/' + encodeURIComponent(tail) + ':clear', {
+        method: 'POST',
+      });
+    });
+  }
+
+  /* The main "Sync" action: real Google Sheet (tabs per section) + CSV files +
+     JSON backup, all inside the "MyStore Records" folder. */
+  /* Sync button: write every section into ONE Google Sheet (one tab per
+     section) inside the dedicated Drive folder, refresh the CSV copies and the
+     full JSON backup — creating or updating in place, never duplicating. */
+  function syncSheetToDrive() {
+    if (!clientId()) return Promise.reject(new Error('No Google Client ID. Tap "Connect Google Account" first.'));
+    const d = getData();
+    let folderRef = null;
+    return getToken()
+      .then(() => ensureFolder())
+      .then((folder) => {
+        folderRef = folder;
+        return findSpreadsheetInFolder(folder.id)
+          .then((found) => found || createSpreadsheetInFolder(folder.id))
+          .then((sheet) => ({ folder, sheet }));
+      })
+      .then(({ folder, sheet }) => ensureSheetTabs(sheet.id)
+        .then(() => {
+          let seq = Promise.resolve([]);
+          SHEETS.forEach((s) => {
+            seq = seq.then((done) => writeSheetTab(sheet.id, s.tab, s.rows(d))
+              .then(() => done.concat(s.tab)));
+          });
+          return seq;
+        })
+        .then((tabs) => {
+          // refresh the CSV copies too, so Excel/CSV workflows keep working
+          let csv = Promise.resolve();
+          SHEETS.forEach((s) => {
+            csv = csv.then(() => syncOneFile(folder, { name: s.file, text: rowsToCsv(s.rows(d)) }));
+          });
+          return csv.then(() => tabs);
+        })
+        .then((tabs) => syncOneFile(folder, { name: FILE_NAME, text: JSON.stringify(sanitizeData(d), null, 2) })
+          .then(() => ({ folder, sheet, tabs }))));
   }
 
   function loadFromDrive() {
@@ -215,10 +491,13 @@
     saveClientId,
     getToken,                 // exposed for testing
     saveToDrive,
+    syncSheetToDrive,         // Google Sheets workbook (one tab per section) + JSON into the dedicated folder
+    syncSheetsToDrive,        // legacy: CSV files + JSON into the dedicated folder
     loadFromDrive,
     // test hooks
     _findBackupFile: () => getToken().then(findBackupFile),
     _sanitize: sanitizeData,
     _reset: () => { accessToken = null; tokenClient = null; },
+    _setToken: (t) => { accessToken = t; },
   };
 })();

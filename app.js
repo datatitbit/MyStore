@@ -339,10 +339,15 @@
   }
 
   $('btn-logout').addEventListener('click', () => {
-    session = null;
-    $('shell').classList.add('hidden');
-    $('screen-login').classList.add('active');
-    renderLogin();
+    try {
+      session = null;
+      driveSyncing = false;       // never leave a sync half-marked if logout happens mid-sync
+      driveOutcome = '';
+      $('shell').classList.add('hidden');
+      $('screen-login').classList.add('active');
+      renderLogin();
+      window.scrollTo(0, 0);
+    } catch (e) { /* logout must never throw */ }
   });
 
   function go(pageId) {
@@ -2222,10 +2227,13 @@
     pill.textContent = '●';
     $('drive-status-text').textContent = info.label;
     const last = data.settings.lastDriveBackupAt;
+    const errDetail = state === 'error' && window.Drive && Drive._lastError && Drive._lastError()
+      ? ' Last error: ' + Drive._lastError() : '';
     $('drive-status-sub').textContent = (connected
       ? (last ? 'Last backup: ' + new Date(last).toLocaleString() + '. ' : 'No backup yet — tap the button below. ')
       : 'Connect the shop Google account (one-time) to enable backup. ')
-      + 'Sheet “MyStore Records” in Drive — tabs: Sales, Expenses, Stock, Products, Staff Attendance, Users. Updated in place, never duplicated; the old Google Doc is left untouched.';
+      + 'Sheet “MyStore Records” in Drive — tabs: Sales, Expenses, Stock, Products, Staff Attendance, Users. Updated in place, never duplicated; the old Google Doc is left untouched.'
+      + errDetail;
     $('set-drive-auto').checked = !!data.settings.autoDriveBackup;
     $('btn-sync-drive').disabled = !connected;
     $('drive-setup-hint').classList.toggle('hidden', connected);
@@ -2237,6 +2245,7 @@
       return toast('Connect the Google account first: More → Settings → Google Drive Backup (one-time).');
     }
     if (!navigator.onLine) return toast('No internet right now. Will back up automatically when back online.');
+    if (driveSyncing) return;   // already running — don't stack two syncs
     driveSyncing = true;
     renderDriveStatus();
     setBusy($('btn-sync-drive'), true, '⏳ Syncing to Google Sheets…');
@@ -2249,7 +2258,8 @@
       })
       .catch((e) => {
         driveOutcome = 'error';
-        toast(e.message || 'Sync failed — try again.', { long: true });
+        const msg = (e && e.message) || 'Sync failed — try again.';
+        toast(msg, { long: true });
       })
       .finally(() => {
         driveSyncing = false;
@@ -2479,7 +2489,50 @@
 
   renderLogin();
 
+  /* ---------- PWA update flow ----------
+     Industry standard: when a new service worker has installed and is waiting,
+     show a banner instead of silently running the old version forever. Users
+     on phones/PWAs otherwise keep old code until they manually clear cache. */
+  let reloadOnControllerChange = false;
+  function showUpdateBanner(reg) {
+    if (document.getElementById('update-banner')) return;
+    const bar = document.createElement('div');
+    bar.id = 'update-banner';
+    bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#0b7a44;' +
+      'color:#fff;display:flex;align-items:center;justify-content:center;gap:12px;' +
+      'padding:10px 14px;font-size:15px;box-shadow:0 2px 8px rgba(0,0,0,.3);font-family:inherit;';
+    const msg = document.createElement('span');
+    msg.textContent = '✨ New version available.';
+    const btn = document.createElement('button');
+    btn.textContent = 'Update now';
+    btn.style.cssText = 'background:#fff;color:#0b7a44;border:none;border-radius:6px;' +
+      'padding:6px 14px;font-weight:600;font-size:14px;cursor:pointer;font-family:inherit;';
+    btn.addEventListener('click', () => {
+      reloadOnControllerChange = true;
+      if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      else location.reload();
+    });
+    bar.appendChild(msg);
+    bar.appendChild(btn);
+    document.body.appendChild(bar);
+  }
+
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js').then((reg) => {
+      // already waiting from a previous visit?
+      if (reg.waiting) showUpdateBanner(reg);
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            showUpdateBanner(reg);
+          }
+        });
+      });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadOnControllerChange) location.reload();
+    });
   }
 })();

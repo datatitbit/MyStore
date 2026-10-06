@@ -1,5 +1,5 @@
 /* Shop Records service worker — offline-first cache */
-const CACHE = 'shop-records-v31';
+const CACHE = 'shop-records-v32';
 const ASSETS = [
   '/',
   '/index.html',
@@ -36,6 +36,12 @@ self.addEventListener('activate', (e) => {
       Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
+});
+
+/* Let the page tell a waiting (updated) worker to take over immediately —
+   powers the in-app "New version available → Update now" banner. */
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', (e) => {

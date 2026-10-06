@@ -66,7 +66,7 @@
   function ensureTokenClient() {
     const cid = clientId();
     if (!cid) return Promise.reject(new Error('No Google Client ID. Tap "Connect Google Account" first.'));
-    return loadGIS().then(() => {
+    return withTimeout(loadGIS(), 20000, 'Could not load Google sign-in (timed out — check internet).').then(() => {
       if (!tokenClient) {
         tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: cid,
@@ -78,23 +78,45 @@
     });
   }
 
+  /* Every Google step gets a timeout so the Sync button can NEVER stay stuck
+     on "Working…" — a blocked OAuth popup or a stalled request resolves with
+     an error instead of hanging forever. */
+  function withTimeout(promise, ms, message) {
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+    ]);
+  }
+
+  /* last sync attempt details for the on-screen error message + debugging */
+  let lastSyncError = '';
+  window.__syncDebug = { error: '', step: '', at: 0 };
+
+  function noteSyncStep(step) {
+    try { window.__syncDebug.step = step; window.__syncDebug.at = Date.now(); } catch (e) {}
+  }
+
   function getToken() {
     if (accessToken) return Promise.resolve(accessToken);
+    noteSyncStep('google-signin-popup');
     return ensureTokenClient().then((tc) => new Promise((resolve, reject) => {
       let done = false;
+      const finish = (fn, arg) => { if (!done) { done = true; clearTimeout(guard); fn(arg); } };
+      // the sign-in popup may wait for the user → generous, but never forever
+      const guard = setTimeout(() => finish(reject,
+        new Error('Google sign-in timed out. Check that the popup was not blocked, then try again.')), 150000);
       tc.callback = (resp) => {
-        if (done) return;
-        done = true;
         if (resp && resp.access_token) {
           accessToken = resp.access_token;
-          resolve(accessToken);
+          noteSyncStep('signed-in');
+          finish(resolve, accessToken);
         } else {
-          reject(new Error('Google sign-in was not completed.'));
+          finish(reject, new Error((resp && resp.error_description) || 'Google sign-in was not completed.'));
         }
       };
       try {
         tc.requestAccessToken({ prompt: '' });
-      } catch (e) { reject(e); }
+      } catch (e) { finish(reject, e); }
     }));
   }
 
@@ -102,12 +124,19 @@
   function gapiFetch(url, options) {
     options = options || {};
     options.headers = Object.assign({}, options.headers, { Authorization: 'Bearer ' + accessToken });
-    return fetch(url, options).then((res) => {
+    noteSyncStep(url.split('?')[0].replace('https://www.googleapis.com', '').replace('https://sheets.googleapis.com', 'sheets'));
+    return withTimeout(fetch(url, options), 30000, 'Google request timed out — check internet and try again.')
+      .then((res) => {
       if (res.status === 401) {           // token expired → drop and force re-auth
         accessToken = null;
         throw new Error('Google sign-in expired. Please try again.');
       }
-      if (!res.ok) throw new Error('Google Drive error (' + res.status + ').');
+      if (!res.ok) {
+        return res.json().catch(() => ({})).then((body) => {
+          const reason = body && (body.error && (body.error.message || body.error.status)) || res.statusText;
+          throw new Error('Google error (' + res.status + (reason ? '): ' + reason : ').'));
+        });
+      }
       return res.json().catch(() => ({}));
     });
   }
@@ -125,10 +154,10 @@
   }
 
   function deleteFile(fileId) {
-    return fetch(API + '/files/' + fileId, {
+    return withTimeout(fetch(API + '/files/' + fileId, {
       method: 'DELETE',
       headers: { Authorization: 'Bearer ' + accessToken },
-    }).then((res) => {
+    }), 30000, 'Google request timed out.').then((res) => {
       if (!res.ok && res.status !== 204) throw new Error('Could not remove an old duplicate backup (' + res.status + ').');
       return true;
     });
@@ -140,22 +169,22 @@
     const form = new FormData();
     form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
     form.append('file', new Blob([content], { type: mime || MIME }));
-    return fetch(UPLOAD + '/files?uploadType=multipart&fields=id', {
+    return withTimeout(fetch(UPLOAD + '/files?uploadType=multipart&fields=id', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + accessToken },
       body: form,
-    }).then((res) => {
+    }), 60000, 'Google Drive upload timed out — check internet and try again.').then((res) => {
       if (!res.ok) throw new Error('Google Drive upload failed (' + res.status + ').');
       return res.json();
     });
   }
 
   function uploadUpdate(fileId, content, mime) {
-    return fetch(UPLOAD + '/files/' + fileId + '?uploadType=media', {
+    return withTimeout(fetch(UPLOAD + '/files/' + fileId + '?uploadType=media', {
       method: 'PATCH',
       headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': mime || MIME },
       body: content,
-    }).then((res) => {
+    }), 60000, 'Google Drive update timed out — check internet and try again.').then((res) => {
       if (!res.ok) throw new Error('Google Drive update failed (' + res.status + ').');
       return res.json();
     });
@@ -437,33 +466,53 @@
     if (!clientId()) return Promise.reject(new Error('No Google Client ID. Tap "Connect Google Account" first.'));
     const d = getData();
     let folderRef = null;
+    noteSyncStep('start');
     return getToken()
-      .then(() => ensureFolder())
+      .then(() => { noteSyncStep('ensure-folder'); return ensureFolder(); })
       .then((folder) => {
         folderRef = folder;
+        noteSyncStep('find-or-create-sheet');
         return findSpreadsheetInFolder(folder.id)
           .then((found) => found || createSpreadsheetInFolder(folder.id))
           .then((sheet) => ({ folder, sheet }));
       })
-      .then(({ folder, sheet }) => ensureSheetTabs(sheet.id)
-        .then(() => {
-          let seq = Promise.resolve([]);
-          SHEETS.forEach((s) => {
-            seq = seq.then((done) => writeSheetTab(sheet.id, s.tab, s.rows(d))
-              .then(() => done.concat(s.tab)));
+      .then(({ folder, sheet }) => {
+        noteSyncStep('ensure-tabs');
+        return ensureSheetTabs(sheet.id)
+          .then(() => {
+            let seq = Promise.resolve([]);
+            SHEETS.forEach((s) => {
+              seq = seq.then((done) => {
+                noteSyncStep('write-tab:' + s.tab);
+                return writeSheetTab(sheet.id, s.tab, s.rows(d))
+                  .then(() => done.concat(s.tab));
+              });
+            });
+            return seq;
+          })
+          .then((tabs) => {
+            // refresh the CSV copies too, so Excel/CSV workflows keep working
+            let csv = Promise.resolve();
+            SHEETS.forEach((s) => {
+              csv = csv.then(() => {
+                noteSyncStep('csv:' + s.file);
+                return syncOneFile(folder, { name: s.file, text: rowsToCsv(s.rows(d)) });
+              });
+            });
+            return csv.then(() => tabs);
+          })
+          .then((tabs) => {
+            noteSyncStep('json-backup');
+            return syncOneFile(folder, { name: FILE_NAME, text: JSON.stringify(sanitizeData(d), null, 2) })
+              .then(() => ({ folder, sheet, tabs }));
           });
-          return seq;
-        })
-        .then((tabs) => {
-          // refresh the CSV copies too, so Excel/CSV workflows keep working
-          let csv = Promise.resolve();
-          SHEETS.forEach((s) => {
-            csv = csv.then(() => syncOneFile(folder, { name: s.file, text: rowsToCsv(s.rows(d)) }));
-          });
-          return csv.then(() => tabs);
-        })
-        .then((tabs) => syncOneFile(folder, { name: FILE_NAME, text: JSON.stringify(sanitizeData(d), null, 2) })
-          .then(() => ({ folder, sheet, tabs }))));
+      })
+      .then((result) => { noteSyncStep('done'); return result; })
+      .catch((e) => {
+        lastSyncError = (e && e.message) || String(e);
+        try { window.__syncDebug.error = lastSyncError; } catch (err) {}
+        throw e;
+      });
   }
 
   function loadFromDrive() {
@@ -472,9 +521,9 @@
       .then(() => findBackupFile())
       .then((file) => {
         if (!file) throw new Error('No backup file found on this Google Drive (' + FILE_NAME + '). Save once first.');
-        return fetch(API + '/files/' + file.id + '?alt=media', {
+        return withTimeout(fetch(API + '/files/' + file.id + '?alt=media', {
           headers: { Authorization: 'Bearer ' + accessToken },
-        }).then((res) => {
+        }), 30000, 'Google Drive download timed out — check internet and try again.').then((res) => {
           if (!res.ok) throw new Error('Could not download the backup (' + res.status + ').');
           return res.text();
         });
@@ -499,5 +548,6 @@
     _sanitize: sanitizeData,
     _reset: () => { accessToken = null; tokenClient = null; },
     _setToken: (t) => { accessToken = t; },
+    _lastError: () => lastSyncError,
   };
 })();
